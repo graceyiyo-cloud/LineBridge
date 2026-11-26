@@ -74,6 +74,96 @@
         }
       }
     },
+    "/api/v1/accounts/{id}/chats/{chatId}/images": {
+      "post": {
+        "operationId": "sendImage",
+        "summary": "Send one explicitly authorized PNG/JPEG image",
+        "description": "Requires send scope and an idempotency key. data is standard base64 of the image (10 MiB decoded, 120 megapixels maximum); bytes are uploaded unmodified, so metadata such as EXIF GPS is not stripped. Personal and group chats use Letter Sealing with existing keys. OpenChat and verified Official Account recipients are transport-encrypted only and require acknowledgeTransportSecurity:true; their acknowledgment returns objectId with messageId null. Never retry delivery_unknown.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chatId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "string",
+                    "contentEncoding": "base64",
+                    "contentMediaType": "image/*"
+                  },
+                  "acknowledgeTransportSecurity": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "Explicit per-image approval for transport encryption without Letter Sealing."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful result"
+          },
+          "400": {
+            "description": "Invalid image"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Account or chat scope denied"
+          },
+          "409": {
+            "description": "Disconnected account, conflicting key or unknown send outcome"
+          },
+          "413": {
+            "description": "Image too large"
+          },
+          "415": {
+            "description": "Unsupported image format or dimensions"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "502": {
+            "description": "Upstream error or unknown delivery"
+          }
+        }
+      }
+    },
     "/api/v1/accounts/{id}/chats/{chatId}/flex": {
       "post": {
         "operationId": "sendFlex",

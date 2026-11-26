@@ -168,4 +168,6 @@ CLI_COMMAND send --profile PROFILE_NAME --account ACCOUNT_ID --chat CHAT_ID --ke
 
 ## 画像の取得と Flex メッセージ
 
+**画像の送信：** `send-image --file 画像`／REST `POST .../chats/{chatId}/images`／ゲートウェイ MCP `line_send_image`／ダッシュボードの入力欄横の画像ボタンで、PNG または JPEG を 1 枚（最大 10 MiB）送信できます。個人・グループチャットは Letter Sealing（既存の鍵のみ、鍵登録や暗号化の格下げなし）、OpenChat と公式アカウントはトランスポート暗号化のみのため、個別の同意を得て `--acknowledge-transport-security` を付けてください。画像は無加工で送信され、**EXIF（位置情報を含む）は削除されません**。送信権限、冪等キー、結果不明時に再送しないルールはテキストと同じです。LINE での実送信は未検証です。詳細は [画像の送信](CLI.md#sending-images)。
+
 保存済み画像と基本ステッカーは `media` / MCP `line_read_image` で、ボイスメッセージ（M4A/3GP、変換・文字起こしなし）は `media` / ゲートウェイ MCP `line_read_audio` で取得します。Talk `send-flex` は送信権限とメッセージごとの承認が必要で、Letter Sealing ではなく通信経路の暗号化を使います。OpenChat Flex は送信前に拒否されます。2026-10-06 の承認済み OA 宛 Flex テストは `INCOMPATIBLE_APP_VERSION` で拒否されました。成功・表示の証拠はなく、すべての相手で非対応とも断定できません。実画像取得の検証は未完了です。[操作と検証結果](CLI.md#images-and-flex-messages)。

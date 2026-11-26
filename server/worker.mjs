@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {HubError,SendRejectedError} from './errors.mjs';
 import {VaultStorage} from './vault.mjs';
 import {ACCOUNT_CHECK_TIMEOUT_MS,accountCheckError} from './account-health.mjs';
+import {WORKER_LINE_MAX} from './image-send.mjs';
 
 const encode=value=>JSON.stringify(value,(_,v)=>typeof v==='bigint'?{$bigint:String(v)}:v);
 const decode=value=>JSON.parse(value,(_,v)=>v&&typeof v==='object'&&'$bigint' in v?BigInt(v.$bigint):v);
@@ -24,7 +25,7 @@ export class ProtocolWorker {
     const input=createInterface({input:child.stdout,crlfDelay:Infinity});
     input.on('line',line=>{
       if(this.child!==child)return;
-      if(line.length>2_000_000){child.kill();return;}
+      if(line.length>WORKER_LINE_MAX){child.kill();return;}
       try{this.handle(decode(line));}catch{child.kill();}
     });
     // exit can precede the final stdout data. Keep the parser, pending RPCs and
@@ -53,7 +54,7 @@ export class ProtocolWorker {
       let ok=false;
       // Bind authorization to a still-pending send; expired/cancelled operations
       // cannot dispatch later. The callback rechecks current parent-owned scope.
-      if(request?.method==='send'&&request.beforeDispatch){try{request.beforeDispatch();ok=true;}catch{}}
+      if(['send','send_image'].includes(request?.method)&&request.beforeDispatch){try{request.beforeDispatch();ok=true;}catch{}}
       this.write({type:'authorize_send_ack',id:message.id,ok});
     }else if(message.type==='event'){
       const emit=this.events.get(message.accountId);if(message.event==='monitor_status')emit?.monitor?.(message.value);else emit?.[message.event]?.(message.value);
@@ -101,6 +102,7 @@ export class ProtocolWorker {
       sendFlex:(chat,input)=>call('send_flex',{chat,input}),
       textCapability:chat=>call('text_capability',{chat}),
       send:(chat,text,options,beforeDispatch)=>worker.call('send',{accountId:id,chat,text,options},40000,undefined,beforeDispatch),
+      sendImage:(chat,input,beforeDispatch)=>worker.call('send_image',{accountId:id,chat,input},90000,undefined,beforeDispatch),
       resolveMessageNames:(chat,messages)=>call('resolve_names',{chat,messages}),
       startMonitor:(chats,reset,refreshIntervalMs)=>call('monitor_start',{chats,reset,refreshIntervalMs}),
       setRefreshInterval:refreshIntervalMs=>call('monitor_interval',{refreshIntervalMs}),

@@ -11,6 +11,7 @@ import {ACCOUNT_CHECK_TIMEOUT_MS,ACCOUNT_CHECK_INTERVAL_MS,accountDiagnostic,acc
 import {refreshIntervalSeconds,MIN_REFRESH_INTERVAL_SECONDS,MAX_REFRESH_INTERVAL_SECONDS} from './monitor-policy.mjs';
 import {DebugLogging} from './debug-logging.mjs';
 import {validateFlex,assertFlexTransport} from './flex.mjs';
+import {validateImageSend} from './image-send.mjs';
 import {imageResult,audioResult,archivedMedia} from './media.mjs';
 
 const accountInput=z.object({label:z.string().trim().min(1).max(80),kind:z.enum(['line','demo']).default('line'),device:z.enum(['IOSIPAD','DESKTOPWIN','ANDROIDSECONDARY']).default('IOSIPAD')}).strict();
@@ -320,6 +321,10 @@ export class Hub {
     const payload=validateFlex(input);assertFlexTransport(this.authorize(actor,id,'send',chatId));
     return this.send(actor,id,chatId,payload,key,'flex');
   }
+  async sendImage(actor,id,chatId,input,key){
+    this.authorize(actor,id,'send',chatId);
+    return this.send(actor,id,chatId,validateImageSend(input),key,'image');
+  }
   async textCapability(actor,id,chatId){
     const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
     this.limit(actor,true);
@@ -330,14 +335,16 @@ export class Hub {
   async send(actor,id,chatId,text,key,kind='text',options={}) {
     this.authorize(actor,id,'send',chatId);this.limit(actor,true);
     if(options.acknowledgeOaTransport!==undefined&&typeof options.acknowledgeOaTransport!=='boolean')fail(400,'invalid_input','acknowledgeOaTransport must be a boolean.');
-    if(!['text','flex'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
+    if(!['text','flex','image'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
     if(kind==='text'&&(typeof text!=='string'||!text.trim()||text.length>5000))fail(400,'invalid_text','A text message of 1–5000 characters is required.');
     if(kind==='flex'){text=validateFlex(text);assertFlexTransport(this.authorize(actor,id,'send',chatId));}
+    // Validated once here; the driver re-validates at the worker boundary.
+    if(kind==='image')text=validateImageSend({data:text?.data,...(text?.acknowledgeTransportSecurity===true?{acknowledgeTransportSecurity:true}:{})});
     if(typeof key!=='string'||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))fail(400,'idempotency_required','Supply a unique idempotency key of 8–128 letters, digits, dots, underscores, colons or hyphens.');
     return this.serialized(id,async()=>{
       const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
       if(kind==='flex')assertFlexTransport(chat);
-      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):[id,chatId,'flex',text])).digest('hex');
+      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):kind==='image'?[id,chatId,'image',text.sha256,text.acknowledgeTransportSecurity===true]:[id,chatId,'flex',text])).digest('hex');
       const previous=this.store.send(actor.id,key);
       if(previous) {
         if(previous.fingerprint!==fingerprint)fail(409,'idempotency_conflict','This key was already used for a different message.');
@@ -348,9 +355,12 @@ export class Hub {
       this.store.reserve(actor.id,key,fingerprint);
       try {
         if(kind==='flex'&&!driver.sendFlex)throw new SendRejectedError(409,'flex_transport_unverified','This adapter does not support Flex sending.');
-        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):driver.send(chat,text,options,()=>{
+        if(kind==='image'&&!driver.sendImage)throw new SendRejectedError(409,'image_send_unsupported','This adapter does not support image sending.');
+        const beforeDispatch=()=>{
           try{if(this.stopping)throw new Error();this.authorize(actor,id,'send',chatId);}catch{throw new SendRejectedError(403,'send_authorization_revoked','Send permission changed or the service stopped during preparation. No message was sent.');}
-        })),replayed:false};
+        };
+        const image=kind==='image'?{data:text.data,...(text.acknowledgeTransportSecurity===true?{acknowledgeTransportSecurity:true}:{})}:undefined;
+        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):kind==='image'?driver.sendImage(chat,image,beforeDispatch):driver.send(chat,text,options,beforeDispatch)),replayed:false};
         this.store.finishSend(actor.id,key,'sent',result);this.store.audit(actor.id,'messages.send',id,chatId,'ok');
         if(this.record(id).kind==='demo'&&kind==='text')try{this.capture(id,chatId,{id:result.messageId,senderId:'synthetic',senderName:'Sample account',text,timestamp:result.timestamp,contentType:'NONE'});}catch{this.store.audit(actor.id,'monitor.capture',id,chatId,'failed');}
         this.runtime.get(id).lastActivity=new Date().toISOString();return result;

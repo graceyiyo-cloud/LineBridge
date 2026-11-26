@@ -17,6 +17,7 @@ const paths={
   chevronLeft:'<path d="m14.5 6-6 6 6 6"/>',
   arrowRight:'<path d="M4.5 12h15m-6-6 6 6-6 6"/>',
   send:'<path d="m20.5 3.5-10 10"/><path d="m20.5 3.5-6.4 17.2-3.6-7.2-7.2-3.6z"/>',
+  image:'<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><circle cx="9" cy="9" r="1.75"/><path d="m20.5 15-4.5-4.5L6 20.5"/>',
   external:'<path d="M14 4h6v6"/><path d="m20 4-8.5 8.5"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
   shield:'<path d="M12 3.25 5 6v5.25c0 4.25 2.9 7.9 7 9.5 4.1-1.6 7-5.25 7-9.5V6z"/><path d="m9.25 12.25 2 2 3.75-3.75"/>',
   lock:'<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5v-3a3.5 3.5 0 0 1 7 0v3"/>',

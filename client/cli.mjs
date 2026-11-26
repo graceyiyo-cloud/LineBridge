@@ -6,13 +6,14 @@ import {ClientError, EXIT, usage} from './errors.mjs';
 import {gatewayRequest} from './request.mjs';
 import {VERSION} from '../server/version.mjs';
 import {discoverLocal} from './discovery.mjs';
-import {writeFile} from 'node:fs/promises';
+import {writeFile,open} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {validateFlex} from '../server/flex.mjs';
 import {imageResult,audioResult} from '../server/media.mjs';
+import {validateImageSend,IMAGE_SEND_MAX_BYTES} from '../server/image-send.mjs';
 import {validateTimeRange} from '../public/search-time.js';
 
-export const DATA_COMMANDS = ['discover','version','accounts','chats','read','refresh','search','events','send','send-flex','media','auth'];
+export const DATA_COMMANDS = ['discover','version','accounts','chats','read','refresh','search','events','send','send-flex','send-image','media','auth'];
 const common = ['profile','url','timeout-ms','credential-stdin'];
 const commandOptions = {
   discover:['data-dir'],
@@ -21,10 +22,11 @@ const commandOptions = {
   search:['query','query-file','query-stdin','account','chat','mode','before','limit','start-time','end-time'],
   send:['account','chat','key','text','text-file','stdin','acknowledge-oa-transport'],
   'send-flex':['account','chat','key','payload','payload-file','stdin'],
+  'send-image':['account','chat','key','file','acknowledge-transport-security'],
   media:['account','chat','message','output'],
   auth:['token-stdin']
 };
-const booleans = new Set(['help','credential-stdin','token-stdin','query-stdin','stdin','acknowledge-oa-transport']);
+const booleans = new Set(['help','credential-stdin','token-stdin','query-stdin','stdin','acknowledge-oa-transport','acknowledge-transport-security']);
 export const HELP = `LineBridge ${VERSION} data client (Node.js 24+, Windows/macOS)
 
   linebridge discover [--data-dir DIR] [--timeout-ms 7000]
@@ -43,6 +45,8 @@ export const HELP = `LineBridge ${VERSION} data client (Node.js 24+, Windows/mac
   linebridge media --account ACCOUNT --chat CHAT --message MESSAGE --output FILE
   linebridge send-flex --account ACCOUNT --chat CHAT --key IDEMPOTENCY_KEY
                        --payload-file JSON_FILE
+  linebridge send-image --account ACCOUNT --chat CHAT --key IDEMPOTENCY_KEY
+                        --file PNG_OR_JPEG [--acknowledge-transport-security]
   linebridge auth forget [--profile NAME]
 
 Common: --profile NAME (default: default), --url GATEWAY, --timeout-ms 45000,
@@ -73,11 +77,14 @@ Media writes a NEW local PNG/JPEG image or M4A/3GP voice file; it never overwrit
 files, invokes vision or transcribes audio.
 Flex requires acknowledgeTransportSecurity:true in its JSON payload: Flex is not
 Letter Sealed. Personal Talk only; OpenChat Flex is blocked pending verification.
+Send-image uploads one PNG/JPEG (10 MiB maximum) unmodified: EXIF such as GPS is
+not stripped. Personal/group chats use Letter Sealing; OpenChat and Official
+Account images are transport-encrypted only and need --acknowledge-transport-security.
 `;
 
 function parse(argv) {
   const command=argv[0];
-  if(!DATA_COMMANDS.includes(command))usage('Use discover, version, accounts, chats, read, refresh, search, events, send or auth. See --help.');
+  if(!DATA_COMMANDS.includes(command))usage('Use discover, version, accounts, chats, read, refresh, search, events, send, send-flex, send-image, media or auth. See --help.');
   const allowed=new Set([...(command==='discover'?['timeout-ms']:common),...commandOptions[command],'help']);
   const options=Object.fromEntries([...allowed].map(name=>[name,{type:booleans.has(name)?'boolean':'string'}]));
   let parsed;
@@ -164,8 +171,8 @@ async function execute(argv,context) {
   if(values['credential-stdin'] && (values.stdin || values['query-stdin']))usage('Credentials and message/query text cannot both consume stdin. Use an enrolled profile or transient environment credentials.');
   if(values['credential-stdin'] && values.profile!==undefined)usage('Choose an enrolled profile or transient credential stdin, not both.');
   const account=values.account===undefined?undefined:identifier(values.account,'account'),chat=values.chat===undefined?undefined:identifier(values.chat,'chat');
-  if(['chats','read','refresh','events','send','send-flex','media'].includes(command) && !account)usage('Supply --account with an explicit account ID.');
-  if(['read','refresh','send','send-flex','media'].includes(command) && !chat)usage('Supply --chat with an explicit chat ID.');
+  if(['chats','read','refresh','events','send','send-flex','send-image','media'].includes(command) && !account)usage('Supply --account with an explicit account ID.');
+  if(['read','refresh','send','send-flex','send-image','media'].includes(command) && !chat)usage('Supply --chat with an explicit chat ID.');
   if(chat && !account)usage('--chat requires --account.');
   const base=account?`/api/v1/accounts/${encodeURIComponent(account)}`:undefined;
   const limit=integer(values.limit,command==='events'?100:30,1,100,'limit');
@@ -199,6 +206,15 @@ async function execute(argv,context) {
     const input=await inputText(values,['payload','payload-file','stdin'],context,30000);
     let payload;try{payload=validateFlex(JSON.parse(input));}catch{usage('Invalid Flex JSON: use the documented typed subset and acknowledgeTransportSecurity:true.');}
     request={path:`${base}/chats/${encodeURIComponent(chat)}/flex`,method:'POST',body:payload,key:values.key,send:true};
+  }
+  if(command==='send-image'){
+    if(typeof values.key!=='string'||!/^[A-Za-z0-9._:-]{8,128}$/.test(values.key))usage('Supply a valid explicit --key.');
+    if(!values.file||/[\x00-\x1f]/.test(values.file))usage('Supply --file with a local PNG or JPEG image.');
+    let bytes;
+    try{const handle=await open(resolve(values.file),'r');try{const {size}=await handle.stat();if(size>IMAGE_SEND_MAX_BYTES)throw new ClientError('input_too_large','Image exceeds the 10 MiB limit.',EXIT.usage);bytes=await handle.readFile();}finally{await handle.close();}}
+    catch(error){if(error instanceof ClientError)throw error;usage('Could not read --file.');}
+    let image;try{image=validateImageSend({data:bytes.toString('base64'),...(values['acknowledge-transport-security']?{acknowledgeTransportSecurity:true}:{})});}catch(error){usage(`Invalid image: ${error.message}`);}
+    request={path:`${base}/chats/${encodeURIComponent(chat)}/images`,method:'POST',body:{data:image.data,...(image.acknowledgeTransportSecurity?{acknowledgeTransportSecurity:true}:{})},key:values.key,send:true};
   }
   if(command==='media'){
     if(!values.output||/[\x00-\x1f]/.test(values.output))usage('Supply --output with a new local file path.');

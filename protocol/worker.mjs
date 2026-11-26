@@ -5,6 +5,7 @@ import {LineDriver} from '../server/drivers.mjs';
 import {HubError,SendRejectedError,publicError} from '../server/errors.mjs';
 import {LiveMonitor} from './monitor.mjs';
 import {accountCheckError} from '../server/account-health.mjs';
+import {WORKER_LINE_MAX} from '../server/image-send.mjs';
 
 // This process owns only LINE RPCs. The parent owns policy, storage and HTTP.
 // stdout is a private JSON pipe; never attach the adapter's raw logging events.
@@ -73,6 +74,7 @@ async function handle(request){
         case 'read':result=await driver.read(params.chat,params.limit,params.cursor);break;
         case 'media':result=await driver.media(params.chat,params.message);break;
         case 'send_flex':result=await driver.sendFlex(params.chat,params.input);break;
+        case 'send_image':result=await driver.sendImage(params.chat,params.input,()=>authorizeDispatch(id));break;
         case 'resolve_names':result=await driver.resolveMessageNames(params.chat,(params.messages ?? []).slice(0,100));break;
         case 'text_capability':result=await driver.textCapability(params.chat);break;
         case 'send':result=await driver.send(params.chat,params.text,params.options,()=>authorizeDispatch(id));break;
@@ -120,7 +122,7 @@ async function shutdown(){
   emit({type:'shutdown_complete'});input.close();process.stdin.destroy();
 }
 input.on('line',line=>{
-  if(line.length>2_000_000){process.exit(2);return;}
+  if(line.length>WORKER_LINE_MAX){process.exit(2);return;}
   try{const message=JSON.parse(line,(_,v)=>v&&typeof v==='object'&&'$bigint'in v?BigInt(v.$bigint):v);
     if(['storage_ack','capture_ack','authorize_send_ack'].includes(message.type)){const pending=writes.get(message.id);writes.delete(message.id);message.ok?pending?.resolve():pending?.reject();}
     else if(message.type==='shutdown')void shutdown();

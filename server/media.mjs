@@ -35,9 +35,10 @@ export function basicSticker(media){
   return /^\d{1,20}$/.test(media?.stickerId??'')&&!media.unsupported&&[undefined,'','0'].includes(media.options)&&(!media.customText||STICKER_PLACEHOLDER.test(media.customText));
 }
 // Only bounded, raster PNG/JPEG output. Never trust upstream filenames or MIME.
-export function imageResult(input,preview=false){
+// Outgoing uploads pass wider limits; camera JPEGs may carry vendor data after EOI.
+export function imageResult(input,preview=false,{maxBytes=MEDIA_MAX_BYTES,maxSide=8192,maxPixels=16_000_000,jpegTrailer=false}={}){
   const bytes=Buffer.from(input);let mimeType,width,height;
-  if(!bytes.length||bytes.length>MEDIA_MAX_BYTES)fail(413,'media_too_large','Image exceeds the 1 MiB limit.');
+  if(!bytes.length||bytes.length>maxBytes)fail(413,'media_too_large',`Image exceeds the ${maxBytes/1048576} MiB limit.`);
   if(bytes.length>=24&&bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&bytes.toString('ascii',12,16)==='IHDR'){
     mimeType='image/png';width=bytes.readUInt32BE(16);height=bytes.readUInt32BE(20);
     let offset=8,ended=false,pixels=false;
@@ -46,7 +47,7 @@ export function imageResult(input,preview=false){
       if(type==='IDAT')pixels=true;offset+=length+12;if(type==='IEND'){ended=length===0&&offset===bytes.length;break;}}
     if(!ended||!pixels||bytes.readUInt32BE(8)!==13)fail(415,'media_unsupported','Malformed PNG image.');
   }else if(bytes.length>4&&bytes[0]===255&&bytes[1]===216){
-    if(bytes.at(-2)!==255||bytes.at(-1)!==217)fail(415,'media_unsupported','Truncated JPEG image.');
+    if(!jpegTrailer&&(bytes.at(-2)!==255||bytes.at(-1)!==217))fail(415,'media_unsupported','Truncated JPEG image.');
     mimeType='image/jpeg';let i=2;
     while(i+4<=bytes.length){
       if(bytes[i++]!==255)break;
@@ -58,7 +59,7 @@ export function imageResult(input,preview=false){
       if([192,193,194].includes(marker)&&size>=8){height=bytes.readUInt16BE(i+3);width=bytes.readUInt16BE(i+5);break;}i+=size;
     }
   }
-  if(!mimeType||!width||!height||width>8192||height>8192||width*height>16_000_000)fail(415,'media_unsupported','Only bounded PNG/JPEG images up to 16 megapixels are supported.');
+  if(!mimeType||!width||!height||width>maxSide||height>maxSide||width*height>maxPixels)fail(415,'media_unsupported',`Only bounded PNG/JPEG images up to ${maxPixels/1e6} megapixels are supported.`);
   return {mimeType,width,height,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),data:bytes.toString('base64'),preview,untrustedContent:true};
 }
 // Only bounded MP4-family (M4A/3GP) audio. The container is walked, never decoded;

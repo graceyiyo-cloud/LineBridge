@@ -7,8 +7,9 @@ import {AliasResolver,contactName} from './aliases.mjs';
 import {ACCOUNT_CHECK_TIMEOUT_MS,accountCheckError,accountDiagnostic} from './account-health.mjs';
 import {mediaDescriptor,archivedMedia,basicSticker,imageResult,audioResult,boundedResponse,decryptAuthenticatedMedia,MEDIA_TIMEOUT_MS} from './media.mjs';
 import {assertFlexTransport,validateFlex} from './flex.mjs';
+import {validateImageSend,imageBlob,IMAGE_TRANSPORT_NOTICE} from './image-send.mjs';
 import {officialAccountCapability,OA_NOTICE} from './official-account.mjs';
-import {prepareText} from './send-preparation.mjs';
+import {prepareText,PreparationFailure} from './send-preparation.mjs';
 import {dispatchText} from './send-dispatch.mjs';
 import {guardRpcTransport} from './rpc-transport.mjs';
 import {existingKeyE2EE} from './encryption-policy.mjs';
@@ -234,6 +235,49 @@ export class LineDriver {
     if(!message?.id)fail(502,'send_unconfirmed','LINE did not return a message ID. Delivery is unknown; inspect the chat before sending again.');
     return {messageId:String(message.id),timestamp:normalizeMessage(message).timestamp,delivery:'accepted_by_line',protection:'line_transport',notice:'Flex is not Letter Sealed. Acceptance does not prove client rendering or recipient interaction.'};
   }
+  // Personal/group images reuse Letter Sealing with existing keys only. OpenChat
+  // and verified Official Accounts have no Letter Sealing; they require an
+  // explicit per-image acknowledgment. No plain-upload fallback is attempted.
+  async sendImage(chat,input,beforeDispatch=()=>{}) {
+    const image=validateImageSend(input),blob=imageBlob(image);
+    let transport=chat.kind==='openchat',dispatched=false,capability;
+    if(!transport&&chat.kind==='direct'){
+      try{capability=await this.monitorRequest(AbortSignal.timeout(15000),()=>officialAccountCapability(this.client,chat));}
+      catch(error){throw new SendRejectedError(502,'send_preparation_failed',`Message preparation failed (${error.diagnostic??'MESSAGE_PREPARATION_SDK_ERROR'}). No message was sent. The image was not uploaded.`);}
+      transport=capability.officialAccount===true;
+    }
+    if(transport&&image.acknowledgeTransportSecurity!==true)throw new SendRejectedError(409,'image_transport_acknowledgment_required',IMAGE_TRANSPORT_NOTICE+' Supply acknowledgeTransportSecurity:true only after explicit user approval. No image was sent.');
+    const rejected=error=>{
+      const code=discoveryErrorCode(error);
+      if(error?.name==='RequestError'&&code!=='protocol_error'&&code!=='UNKNOWN')return new SendRejectedError(502,'line_send_rejected',`LINE rejected the image (${code}). No fallback was attempted.`);
+    };
+    if(transport){
+      // reqseq-mode upload: the OBS server creates the message itself, so the
+      // upload is the dispatch and LINE returns an object ID, not a message ID.
+      await beforeDispatch();
+      let objId;
+      try{({objId}=await this.client.obs.uploadObjTalk(chat.id,'image',blob,undefined,image.filename));}
+      catch(error){throw rejected(error)??error;}
+      if(!objId)fail(502,'send_unconfirmed','LINE did not return an object ID. Delivery is unknown; inspect the chat before sending again.');
+      return {messageId:null,objectId:String(objId),timestamp:new Date().toISOString(),delivery:'accepted_by_line',protection:'line_transport',image:{mimeType:image.mimeType,width:image.width,height:image.height,bytes:image.bytes,sha256:image.sha256},notice:IMAGE_TRANSPORT_NOTICE};
+    }
+    const view=Object.create(this.client),e2ee=existingKeyE2EE(this.client),talk=Object.create(this.client.talk);
+    e2ee.client=view;view.e2ee=e2ee;view.talk=talk;
+    // Reuse the capability check's negotiation, exactly as text preparation does.
+    if(capability?.negotiation!==undefined)talk.negotiateE2EEPublicKey=async()=>capability.negotiation;
+    // Authorize at the same RPC boundary as text, after the encrypted upload.
+    talk.sendMessage=options=>{dispatched=true;return dispatchText(this.client,chat,{...options,e2ee:true},beforeDispatch);};
+    const obs=new this.client.obs.constructor(view);
+    let message;
+    try{message=await obs.uploadMediaByE2EE({data:blob,oType:'image',to:chat.id,filename:image.filename});}
+    catch(error){
+      if(error instanceof SendRejectedError)throw error;
+      if(!dispatched)throw new SendRejectedError(502,'send_preparation_failed',`Message preparation failed (${new PreparationFailure('ENCRYPTION',error).diagnostic}). No message was sent. The encrypted image upload or Letter Sealing preparation failed; do not reset keys or weaken encryption.`);
+      throw rejected(error)??error;
+    }
+    if(!message?.id)fail(502,'send_unconfirmed','LINE did not return a message ID. Delivery is unknown; inspect the chat before sending again.');
+    return {messageId:String(message.id),timestamp:normalizeMessage(message).timestamp,delivery:'accepted_by_line',protection:'letter_sealing',image:{mimeType:image.mimeType,width:image.width,height:image.height,bytes:image.bytes,sha256:image.sha256}};
+  }
   async textCapability(chat) {
     try {
       const operation=()=>officialAccountCapability(this.client,chat);
@@ -299,6 +343,13 @@ export class DemoDriver {
     const message={id:`demo-${randomUUID()}`,senderId:'synthetic',text,timestamp:new Date().toISOString(),contentType:'NONE'};
     const list=this.messages.get(chat.id) ?? []; list.push(message);this.messages.set(chat.id,list.slice(-100));
     return {messageId:message.id,timestamp:message.timestamp,delivery:'sandbox_only'};
+  }
+  async sendImage(chat,input) {
+    const image=validateImageSend(input);
+    if(chat.kind==='openchat'&&image.acknowledgeTransportSecurity!==true)throw new SendRejectedError(409,'image_transport_acknowledgment_required',IMAGE_TRANSPORT_NOTICE+' Supply acknowledgeTransportSecurity:true only after explicit user approval. No image was sent.');
+    const message={id:`demo-${randomUUID()}`,senderId:'synthetic',text:'',timestamp:new Date().toISOString(),contentType:'IMAGE',media:{kind:'image',encrypted:false}};
+    const list=this.messages.get(chat.id) ?? []; list.push(message);this.messages.set(chat.id,list.slice(-100));
+    return {messageId:message.id,timestamp:message.timestamp,delivery:'sandbox_only',image:{mimeType:image.mimeType,width:image.width,height:image.height,bytes:image.bytes,sha256:image.sha256}};
   }
   stop() { this.ready=false; }
 }

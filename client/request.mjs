@@ -4,6 +4,8 @@ import {preparationDiagnostic} from './send-diagnostic.mjs';
 const errors = {
   oa_transport_acknowledgment_required:'Official Account messages are transport-encrypted, not Letter Sealed. Obtain explicit approval for this recipient and message, then use --acknowledge-oa-transport. No message was sent; do not retry automatically.',
   send_authorization_revoked:'Send permission expired or changed during preparation. No message was sent.',
+  invalid_image:'Invalid image: supply a PNG or JPEG file up to 10 MiB.', image_transport_acknowledgment_required:'OpenChat and Official Account images are transport-encrypted, not Letter Sealed. Obtain explicit approval for this recipient and image, then use --acknowledge-transport-security. No image was sent; do not retry automatically.',
+  image_send_unsupported:'This account adapter does not support image sending.',
   invalid_flex:'Invalid Flex payload or missing transport-security acknowledgment.', flex_transport_unsupported:'OpenChat Flex is not verified and is blocked; no fallback was used.',
   media_metadata_missing:'Message has no image, sticker or audio metadata.', media_not_archived:'Message is not in this scoped chat archive.',
   media_unsupported:'Unsupported media type, format or dimensions.', sticker_unsupported:'Custom-text or option-bearing stickers are not supported.',
@@ -63,6 +65,8 @@ export async function gatewayRequest({url,credentials,path,method='GET',body,key
   }
   // A successful HTTP status alone cannot confirm a send. Match the gateway's
   // minimum acknowledgement contract before reporting success to automation.
-  if(send && (result.error!==undefined || typeof result.messageId!=='string' || !result.messageId.trim()))throw unknownDelivery(response.status);
+  // Transport-only image uploads are acknowledged with an OBS object ID instead.
+  const acknowledged=id=>typeof id==='string'&&!!id.trim();
+  if(send && (result.error!==undefined || !(acknowledged(result.messageId) || acknowledged(result.objectId))))throw unknownDelivery(response.status);
   return result;
 }

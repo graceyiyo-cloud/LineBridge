@@ -12,6 +12,7 @@ import {Cloudflare,CALLBACK} from './cloudflare.mjs';
 import {VERSION} from './version.mjs';
 import {LocalSetup} from './local-setup.mjs';
 import {ChatAccess} from './chat-access.mjs';
+import {IMAGE_SEND_BODY_LIMIT} from './image-send.mjs';
 
 function freshQuery(req){if(req.query.fresh===undefined)return false;if(!['true','false'].includes(req.query.fresh))fail(400,'invalid_input','fresh must be true or false.');return req.query.fresh==='true';}
 function harden(app) {
@@ -53,6 +54,7 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
     if(!['GET','HEAD'].includes(req.method) && (req.headers['x-line-bridge']!=='dashboard' || !req.headers.origin))return res.status(403).json({error:'origin_required'});
     next();
   });
+  admin.post('/admin/accounts/:id/chats/:chatId/images',express.json({limit:IMAGE_SEND_BODY_LIMIT}));
   admin.use(express.json({limit:'32kb'}));
   admin.use(admission); // An admitted request may still have been reading its body.
   admin.get(CALLBACK,asyncRoute(async(req,res)=>{
@@ -106,6 +108,7 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
   admin.get('/admin/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.read(adminActor,req.params.id,req.params.chatId,Number(req.query.limit ?? 30),req.query.cursor,freshQuery(req)))));
   admin.get('/admin/accounts/:id/chats/:chatId/text-capability',asyncRoute(async(req,res)=>res.json(await hub.textCapability(adminActor,req.params.id,req.params.chatId))));
   admin.post('/admin/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.send(adminActor,req.params.id,req.params.chatId,req.body.text,req.body.idempotencyKey,'text',{acknowledgeOaTransport:req.body.acknowledgeOaTransport}))));
+  admin.post('/admin/accounts/:id/chats/:chatId/images',asyncRoute(async(req,res)=>{const {idempotencyKey,...input}=req.body??{};res.json(await hub.sendImage(adminActor,req.params.id,req.params.chatId,input,idempotencyKey));}));
   admin.post('/admin/tokens',(req,res)=>res.status(201).json(hub.createToken(req.body)));
   admin.put('/admin/tokens/:id/grants',(req,res)=>res.json(hub.updateTokenScope(req.params.id,req.body)));
   admin.delete('/admin/tokens/:id',(req,res)=>{hub.store.revoke(req.params.id);hub.store.audit('local-admin','token.revoke',null,null,'ok');res.json({ok:true});});
@@ -160,6 +163,10 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
     // silently fall back to the VM's local permissions.
     hub.limit(req.actor);next();
   }));
+  // Only the image route and MCP accept large bodies; everything else stays at 32 KB.
+  const imageBody=express.json({limit:IMAGE_SEND_BODY_LIMIT});
+  gateway.post('/api/v1/accounts/:id/chats/:chatId/images',imageBody);
+  gateway.post('/mcp',imageBody);
   gateway.use(express.json({limit:'32kb'}));
   gateway.use(admission);
   gateway.get('/api/v1/version',(req,res)=>res.json({service:'LineBridge',version:VERSION}));
@@ -173,6 +180,7 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
   gateway.get('/openapi.json',(req,res)=>res.json(openapi));
   gateway.get('/api/v1/accounts/:id/chats/:chatId/messages/:messageId/media',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');res.json(await hub.media(req.actor,req.params.id,req.params.chatId,req.params.messageId));}));
   gateway.post('/api/v1/accounts/:id/chats/:chatId/flex',asyncRoute(async(req,res)=>res.json(await hub.sendFlex(req.actor,req.params.id,req.params.chatId,req.body,req.headers['idempotency-key']))));
+  gateway.post('/api/v1/accounts/:id/chats/:chatId/images',asyncRoute(async(req,res)=>res.json(await hub.sendImage(req.actor,req.params.id,req.params.chatId,req.body,req.headers['idempotency-key']))));
   gateway.post('/mcp',asyncRoute((req,res)=>mcpHandler(hub,req,res)));
   gateway.all('/mcp',(req,res)=>res.status(405).json({error:'method_not_allowed',message:'Use stateless Streamable HTTP POST.'}));
   gateway.use((req,res)=>res.status(404).json({error:'not_found'}));gateway.use(errors);

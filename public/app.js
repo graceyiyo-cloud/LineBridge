@@ -27,6 +27,7 @@ let state,selectedAccount,selectedChat,chats=[],loginAccount,loginTimer,loginVie
 let startupChecked=false;
 const savingAutoMonitor=new Set();
 const savingChatMonitoring=new Set();
+let imageAttempt;
 let refreshRunning=false,reading=false,sending=false,chatListRefreshPending=false;
 let refreshTimer,refreshIntervalSeconds=15,refreshSettingsVersion;
 let currentPage='dashboard',monitorAccount=null,monitorReading=false,monitorVersion='',monitorOptions='',accountOptions='';
@@ -117,7 +118,7 @@ document.addEventListener('keydown',event=>{
 addEventListener('scroll',()=>document.body.classList.toggle('scrolled',scrollY>4),{passive:true});
 hydrateIcons();navIndicator($('.nav-list'));
 const wizard=createWizard({escape,action,nice,avatar,getState:()=>state,getSelected:()=>selectedAccount,
-  select:async id=>{selectedAccount=id;selectedChat=null;sendAttempt=null;await loadChats();renderAccounts();},
+  select:async id=>{selectedAccount=id;selectedChat=null;sendAttempt=null;imageAttempt=null;await loadChats();renderAccounts();},
   tryDemo,
   getChats:()=>chats,
   openChat:()=>$('#chat-dialog').showModal(),
@@ -176,7 +177,7 @@ function renderAccounts(){
   if(signature!==accountOptions){
   accountOptions=signature;
   $('#account-list').innerHTML=state.accounts.length?state.accounts.map(a=>`<button class="account-item ${selectedAccount===a.id?'selected':''}" data-account="${escape(a.id)}">${avatar(accountName(a),a.id,'',`<span class="presence ${presence(a)}"></span>`)}<span class="account-info"><strong>${escape(accountName(a))}</strong><small>${a.kind==='demo'?'沙盒':escape(accountStatus(a))} · AI ${a.designatedChats}</small></span></button>`).join(''):'<p class="pane-empty">尚無帳號</p>';
-  document.querySelectorAll('[data-account]').forEach(e=>e.addEventListener('click',()=>action(async()=>{selectedAccount=e.dataset.account;selectedChat=null;sendAttempt=null;await loadChats();renderAccounts();})));
+  document.querySelectorAll('[data-account]').forEach(e=>e.addEventListener('click',()=>action(async()=>{selectedAccount=e.dataset.account;selectedChat=null;sendAttempt=null;imageAttempt=null;await loadChats();renderAccounts();})));
   }
   if(selectedAccount){const a=state.accounts.find(a=>a.id===selectedAccount);if(a){const el=$('#selected-status');if(el)el.innerHTML=statusBadge(a);renderAccountHealth(a);renderDiscoveryNotice(a);renderAutoMonitorSetting(a);}}
 }
@@ -284,7 +285,7 @@ function renderChatList(){
   $('#chat-search-count').textContent=`${visibleChats.length===chats.length?'':`${visibleChats.length} / `}${chats.length} 個聊天室${hint}`;
   target.innerHTML=visibleChats.length?visibleChats.map(c=>`<div class="chat-item ${selectedChat===c.id?'selected':''}" data-chat="${escape(c.id)}" role="button" tabindex="0">${avatar(chatName(c),c.id,'sm')}<div class="chat-item-main"><strong>${escape(chatName(c))}</strong><small>${escape(c.kind==='openchat'?'OpenChat · 實驗性':nice(c.kind))}</small></div><label class="ai-toggle" title="${c.enabled?'停用 AI 監控':'啟用 AI 監控'}"><input type="checkbox" data-designate="${escape(c.id)}" aria-label="AI 監控：${escape(chatName(c))}" ${c.enabled?'checked':''} ${savingChatMonitoring.has(`${a.id}\n${c.id}`)?'disabled':''}><span>${c.enabled?'AI':'未監控'}</span></label></div>`).join(''):chats.length?'<div class="list-empty">沒有符合的聊天室<button class="link-btn" id="clear-chat-search">清除篩選</button></div>':`<div class="list-empty">尚無聊天室<button class="btn sm" data-act="discover" ${a.status!=='connected'?'disabled':''}>探索聊天室</button></div>`;
   $('#clear-chat-search')?.addEventListener('click',()=>{chatSearch='';chatFilter='all';chatAiFilter='all';$('#chat-search').value='';$('#chat-filter').value='all';$('#chat-ai-filter').value='all';renderChatList();$('#chat-search').focus();});
-  target.querySelectorAll('[data-chat]').forEach(el=>{const select=()=>action(async()=>{if(reading||sending)return;selectedChat=el.dataset.chat;sendAttempt=null;renderChatList();$('#reader').innerHTML=readerLoading();await readMessages();});el.addEventListener('click',event=>{if(!event.target.closest('label'))select();});el.addEventListener('keydown',event=>{if(event.target===el&&(event.key==='Enter'||event.key===' ')){event.preventDefault();select();}});});
+  target.querySelectorAll('[data-chat]').forEach(el=>{const select=()=>action(async()=>{if(reading||sending)return;selectedChat=el.dataset.chat;sendAttempt=null;imageAttempt=null;renderChatList();$('#reader').innerHTML=readerLoading();await readMessages();});el.addEventListener('click',event=>{if(!event.target.closest('label'))select();});el.addEventListener('keydown',event=>{if(event.target===el&&(event.key==='Enter'||event.key===' ')){event.preventDefault();select();}});});
   target.querySelectorAll('[data-designate]').forEach(el=>el.addEventListener('change',()=>action(()=>saveChatMonitoring(a.id,el.dataset.designate,el.checked))));
 }
 // Stable avatar tones make long chat and account lists easier to scan.
@@ -359,13 +360,53 @@ async function readMessages(){
     }).join('');
     data.messages.forEach(m=>m.id&&seenMessages.add(m.id));
     const demo=a.kind==='demo',seal=chat.kind==='openchat'?'OpenChat 使用 LINE 傳輸加密。':'支援時使用 Letter Sealing；僅在 LINE 要求時使用標準傳輸加密。';
-    $('#reader').innerHTML=`<div class="reader-head">${avatar(chatName(chat),chat.id)}<div class="reader-title"><strong>${escape(chatName(chat))}</strong><span class="reader-meta">${escape(chat.kind==='openchat'?'OpenChat · 實驗性':nice(chat.kind))} · <span id="chat-monitor-status" class="${chat.enabled?'on':''}">${chat.enabled?'AI監控中':'AI未監控'}</span></span></div><div class="reader-actions"><button type="button" class="switch" id="toggle-chat-monitor" role="switch" aria-label="AI 監控" aria-checked="${!!chat.enabled}"></button><button class="icon-btn" id="search-chat-messages" aria-label="搜尋封存" title="搜尋封存">${icon('search')}</button><button class="icon-btn" id="refresh-messages" aria-label="重新整理訊息" title="重新整理">${icon('refresh')}</button><button class="icon-btn" id="chat-info" aria-label="聊天室 ID" title="聊天室 ID" aria-controls="chat-info-panel" aria-expanded="${chatInfoOpen}">${icon('info')}</button></div></div><div class="reader-id" id="chat-info-panel" ${chatInfoOpen?'':'hidden'}><code id="chat-id-value">${escape(chatId)}</code><button class="icon-btn sm" data-copy="#chat-id-value" aria-label="複製聊天室 ID" title="複製">${icon('copy')}</button></div><div class="message-list${first?' enter':''}"><p class="coverage">${escape(coverage(data.coverage))}</p>${bubbles||'<p class="reader-empty">尚無文字訊息</p>'}</div><div id="send-feedback" class="note warn" role="status" hidden></div><form class="compose" id="send-form">${demo?'':`<span class="compose-lock" title="${escape(seal)}" aria-label="${escape(seal)}" role="img">${icon('lock')}</span>`}<textarea name="text" rows="1" maxlength="5000" required placeholder="${demo?'傳送到沙盒':'輸入訊息，將傳送到 LINE'}" aria-label="訊息內容"></textarea><button class="send-btn" type="submit" aria-label="${demo?'傳送到沙盒':'傳送到 LINE'}" title="傳送（Ctrl+Enter）">${icon('send')}</button></form>`;
+    $('#reader').innerHTML=`<div class="reader-head">${avatar(chatName(chat),chat.id)}<div class="reader-title"><strong>${escape(chatName(chat))}</strong><span class="reader-meta">${escape(chat.kind==='openchat'?'OpenChat · 實驗性':nice(chat.kind))} · <span id="chat-monitor-status" class="${chat.enabled?'on':''}">${chat.enabled?'AI監控中':'AI未監控'}</span></span></div><div class="reader-actions"><button type="button" class="switch" id="toggle-chat-monitor" role="switch" aria-label="AI 監控" aria-checked="${!!chat.enabled}"></button><button class="icon-btn" id="search-chat-messages" aria-label="搜尋封存" title="搜尋封存">${icon('search')}</button><button class="icon-btn" id="refresh-messages" aria-label="重新整理訊息" title="重新整理">${icon('refresh')}</button><button class="icon-btn" id="chat-info" aria-label="聊天室 ID" title="聊天室 ID" aria-controls="chat-info-panel" aria-expanded="${chatInfoOpen}">${icon('info')}</button></div></div><div class="reader-id" id="chat-info-panel" ${chatInfoOpen?'':'hidden'}><code id="chat-id-value">${escape(chatId)}</code><button class="icon-btn sm" data-copy="#chat-id-value" aria-label="複製聊天室 ID" title="複製">${icon('copy')}</button></div><div class="message-list${first?' enter':''}"><p class="coverage">${escape(coverage(data.coverage))}</p>${bubbles||'<p class="reader-empty">尚無文字訊息</p>'}</div><div id="send-feedback" class="note warn" role="status" hidden></div><form class="compose" id="send-form">${demo?'':`<span class="compose-lock" title="${escape(seal)}" aria-label="${escape(seal)}" role="img">${icon('lock')}</span>`}<input type="file" id="send-image-input" accept="image/png,image/jpeg" hidden><button type="button" class="icon-btn compose-image" id="send-image" aria-label="${demo?'傳送圖片到沙盒':'傳送圖片到 LINE'}" title="傳送圖片">${icon('image')}</button><textarea name="text" rows="1" maxlength="5000" required placeholder="${demo?'傳送到沙盒':'輸入訊息，將傳送到 LINE'}" aria-label="訊息內容"></textarea><button class="send-btn" type="submit" aria-label="${demo?'傳送到沙盒':'傳送到 LINE'}" title="傳送（Ctrl+Enter）">${icon('send')}</button></form>`;
     renderChatMonitoring();
     $('#toggle-chat-monitor').addEventListener('click',()=>action(()=>{const current=chats.find(c=>c.id===chatId);if(current)return saveChatMonitoring(accountId,chatId,!current.enabled);}));
     $('#search-chat-messages').addEventListener('click',()=>action(async()=>{switchTab('archive');await archive.open(accountId,chatId);}));
     $('#refresh-messages').addEventListener('click',()=>action(readMessages));
     $('#chat-info').addEventListener('click',()=>{chatInfoOpen=!chatInfoOpen;$('#chat-info-panel').hidden=!chatInfoOpen;$('#chat-info').setAttribute('aria-expanded',String(chatInfoOpen));});
     const list=$('.message-list');list.scrollTop=list.scrollHeight;
+    $('#send-image').addEventListener('click',()=>{if(!sending)$('#send-image-input').click();});
+    $('#send-image-input').addEventListener('change',event=>{
+      const input=event.currentTarget,file=input.files?.[0];input.value='';
+      if(!file||sending)return;
+      sending=true;
+      action(async()=>{
+        const button=$('#send-image'),feedback=$('#send-feedback');
+        button.disabled=true;button.classList.add('sending');feedback.hidden=true;
+        try{
+          if(!['image/png','image/jpeg'].includes(file.type))throw new Error('只支援 PNG 或 JPEG 圖片。');
+          if(file.size>10*1024*1024)throw new Error('圖片超過 10 MiB 上限。');
+          const signature=[accountId,chatId,file.name,file.size,file.lastModified].join('|');
+          let intent=imageAttempt?.signature===signature?imageAttempt:null;
+          if(!intent){
+            const info=demo||chat.kind!=='direct'?{officialAccount:false}:await api(`/accounts/${accountId}/chats/${encodeURIComponent(chatId)}/text-capability`);
+            const transport=chat.kind==='openchat'||info.officialAccount;
+            const size=file.size>=1048576?`${(file.size/1048576).toFixed(1)} MB`:`${Math.ceil(file.size/1024)} KB`;
+            const warning=transport?`${chat.kind==='openchat'?'這是 OpenChat':'這是 LINE 官方帳號'}。此圖片僅使用傳輸加密，不使用 Letter Sealing（端對端加密）。
+
+`:'';
+            if(accountId!==selectedAccount||chatId!==selectedChat||!window.confirm(`${warning}收件者：${chatName(chat)}
+${chatId}
+
+圖片：${file.name}（${size}）
+圖片原檔直接上傳，不會移除 EXIF（含拍攝位置）。
+
+同意傳送這張圖片？`))return;
+            intent={signature,key:crypto.randomUUID(),...(transport?{acknowledgeTransportSecurity:true}:{})};
+          }
+          imageAttempt=intent;
+          const bytes=new Uint8Array(await file.arrayBuffer());let binary='';
+          for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+          const result=await api(`/accounts/${accountId}/chats/${encodeURIComponent(chatId)}/images`,{method:'POST',body:JSON.stringify({data:btoa(binary),idempotencyKey:intent.key,...(intent.acknowledgeTransportSecurity?{acknowledgeTransportSecurity:true}:{})})});
+          imageAttempt=null;toast(result.delivery==='sandbox_only'?'圖片已傳送到沙盒':'圖片已送出');await readMessages();await refresh();
+        }catch(error){
+          if(['send_preparation_failed','line_send_rejected','image_transport_acknowledgment_required','send_authorization_revoked','invalid_image','media_unsupported','media_too_large'].includes(error.code))imageAttempt=null;
+          feedback.textContent=error.message;feedback.hidden=false;throw error;
+        }finally{button.disabled=false;button.classList.remove('sending');sending=false;flushDiscoveredChats();}
+      });
+    });
     const textarea=$('#send-form textarea');textarea.value=draft;
     textarea.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();$('#send-form').requestSubmit();}});
     $('#send-form').addEventListener('submit',event=>{
@@ -373,7 +414,7 @@ async function readMessages(){
       if(sending)return;
       sending=true;
       action(async()=>{
-        const text=form.elements.text.value,button=form.querySelector('button'),feedback=$('#send-feedback');
+        const text=form.elements.text.value,button=form.querySelector('.send-btn'),feedback=$('#send-feedback');
         button.disabled=true;button.classList.add('sending');feedback.hidden=true;
         try{
           const intent=await prepareSendIntent(sendAttempt,accountId,chatId,text,{

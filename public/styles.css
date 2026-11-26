@@ -619,6 +619,8 @@ mark{padding:0 2px;border-radius:4px;background:color-mix(in srgb,var(--accent) 
 .compose textarea:focus{box-shadow:none}
 .compose-lock{display:grid;align-self:center;color:var(--text-3);cursor:help}
 .compose-lock .icon{width:16px;height:16px}
+.compose-image{align-self:flex-end;flex-shrink:0;width:36px;height:36px;color:var(--text-3)}
+.compose-image:disabled{opacity:.55}
 .send-btn{display:grid;place-items:center;flex-shrink:0;width:36px;height:36px;padding:0;border:0;border-radius:11px;background:var(--accent);color:var(--on-accent);transition:background-color .2s,transform .2s var(--spring),opacity .2s}
 .send-btn:hover:not(:disabled){background:var(--accent-hover)}
 .send-btn:active:not(:disabled){transform:scale(.9)}
