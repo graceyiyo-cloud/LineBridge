@@ -249,7 +249,10 @@ export class LineDriver {
     if(transport&&image.acknowledgeTransportSecurity!==true)throw new SendRejectedError(409,'image_transport_acknowledgment_required',IMAGE_TRANSPORT_NOTICE+' Supply acknowledgeTransportSecurity:true only after explicit user approval. No image was sent.');
     const rejected=error=>{
       const code=discoveryErrorCode(error);
-      if(error?.name==='RequestError'&&code!=='protocol_error'&&code!=='UNKNOWN')return new SendRejectedError(502,'line_send_rejected',`LINE rejected the image (${code}). No fallback was attempted.`);
+      // LINE's short reason (e.g. "not allowed contentType") is the only clue to
+      // which field it refused; keep it only when it is bounded plain ASCII.
+      const reason=typeof error?.data?.reason==='string'&&/^[A-Za-z0-9 _.,:()'-]{1,80}$/.test(error.data.reason)?` LINE reason: ${error.data.reason}.`:'';
+      if(error?.name==='RequestError'&&code!=='protocol_error'&&code!=='UNKNOWN')return new SendRejectedError(502,'line_send_rejected',`LINE rejected the image (${code}).${reason} No fallback was attempted.`);
     };
     if(transport){
       // reqseq-mode upload: the OBS server creates the message itself, so the
