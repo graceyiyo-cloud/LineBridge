@@ -168,7 +168,7 @@ Advanced remote/manual enrollment still stores a token the operator has already 
 - HTTP: `POST /api/v1/accounts/{id}/chats/{chatId}/images` with `Idempotency-Key` and JSON `{"data":"<base64>"}` (15 MB request limit on this route only). MCP: `line_send_image` on the gateway endpoint; it is not yet in the protected stdio adapter catalog. Large images may need a longer `--timeout-ms`.
 - Dashboard: the image button beside the message box asks for confirmation (recipient, file, size and, when applicable, the transport-only warning) before sending.
 
-Live LINE delivery and rendering of sent images are unverified in this fork. Test with an approved recipient before relying on it.
+**Known failure (live test, 2026-11-26):** two approved sends of a 123 KB JPEG to one personal (direct) chat from an iPad secondary-device account were explicitly rejected by LINE with `E2EE_INVALID_VERSION` (`line_send_rejected`); nothing was delivered. Adding `contentType:"1"` and `e2eeMark:"2"` to the message metadata did not help and was reverted. The cause is unconfirmed: either the pinned SDK's E2EE image format is not accepted by the current LINE server, or this device's Letter Sealing keys are inconsistent (earlier messages in the same chat were also undecryptable). Personal/group image sending should be treated as **not working** until a successful send is recorded. OpenChat and Official Account image sends were not live-tested.
 
 ## Local profile discovery
 

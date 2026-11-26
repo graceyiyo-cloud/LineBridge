@@ -185,7 +185,7 @@ CLI_COMMAND send --profile PROFILE_NAME --account ACCOUNT_ID --chat CHAT_ID --ke
 
 ## 圖片讀取與 Flex 訊息
 
-**傳送圖片：**`send-image --file 圖片`／REST `POST .../chats/{chatId}/images`／閘道 MCP `line_send_image`／儀表板輸入框旁的圖片按鈕，可傳一張 PNG 或 JPEG（上限 10 MiB）。個人與群組聊天使用 Letter Sealing（只用既有金鑰，不註冊金鑰、不降級）；OpenChat 與官方帳號只有傳輸加密，需另行同意並加 `--acknowledge-transport-security`。圖片原檔上傳，**不會移除 EXIF（含拍攝位置）**。傳送權限、冪等 key 與未知結果不重送規則同文字訊息。實際 LINE 傳送尚未實測，詳見 [傳送圖片](CLI.md#sending-images)。
+**傳送圖片：**`send-image --file 圖片`／REST `POST .../chats/{chatId}/images`／閘道 MCP `line_send_image`／儀表板輸入框旁的圖片按鈕，可傳一張 PNG 或 JPEG（上限 10 MiB）。個人與群組聊天使用 Letter Sealing（只用既有金鑰，不註冊金鑰、不降級）；OpenChat 與官方帳號只有傳輸加密，需另行同意並加 `--acknowledge-transport-security`。圖片原檔上傳，**不會移除 EXIF（含拍攝位置）**。傳送權限、冪等 key 與未知結果不重送規則同文字訊息。**已知問題：**2026-11-26 實測傳一張 JPEG 到一對一聊天兩次，都被 LINE 以 `E2EE_INVALID_VERSION` 拒絕、未送達；原因尚未確認，個人與群組傳圖目前應視為**無法使用**，OpenChat 與官方帳號未實測。詳見 [傳送圖片](CLI.md#sending-images)。
 
 可用 `media`／MCP `line_read_image` 按需讀取已封存的圖片及基本貼圖靜態預覽；語音訊息（M4A/3GP，不轉檔、不轉文字）可用 `media` 或閘道 MCP `line_read_audio` 取得。CLI 只建立新檔，不代表模型已看過圖片或聽過語音。個人 Talk 的 `send-flex` 必須明確確認 Flex 只有傳輸層加密、沒有 Letter Sealing，並沿用傳送權限與冪等 key。OpenChat Flex 因協定尚未驗證而阻擋，不會自動改走 LIFF 或授權。舊封存資料、素材格式與大小限制，以及待測試群組驗證項目，請見 [圖片與 Flex 操作說明](CLI.md#images-and-flex-messages)。2026-10-06 的一次已授權 OA 收件者 Flex 實測遭 LINE 明確拒絕：`INCOMPATIBLE_APP_VERSION`；尚無成功接受或顯示的證據，也不能推論所有收件者都不支援。圖片下載的真實驗證仍待完成。詳見 [實測紀錄與限制](CLI.md#evidence-and-live-test-handoff)。
 
